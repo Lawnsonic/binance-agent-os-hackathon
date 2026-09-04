@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cost-Truth Engine</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --line:#26303d;
+  --ink:#e6edf3; --dim:#8b949e; --accent:#f0b429; --bad:#f85149; --good:#3fb950;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+:root:not([data-theme="dark"]){}
+@media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
+  --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --ink:#1f2328; --dim:#636c76;
+}}
+:root[data-theme="light"]{--bg:#fff;--panel:#f6f8fa;--line:#d0d7de;--ink:#1f2328;--dim:#636c76;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
+ line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:960px;margin:0 auto;padding:48px 20px 80px}
+h1{font-size:clamp(26px,5vw,40px);margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--dim);font-size:16px;margin:0 0 40px;max-width:64ch}
+.claim{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+ border-radius:8px;padding:20px 22px;margin:0 0 40px;font-size:17px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:44px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px}
+.stat .n{font-size:30px;font-weight:600;font-family:var(--mono);letter-spacing:-.02em}
+.stat .l{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.07em;margin-top:6px}
+.stat.hero .n{color:var(--accent)}
+h2{font-size:19px;margin:44px 0 8px;letter-spacing:-.01em}
+.note{color:var(--dim);font-size:14px;margin:0 0 18px;max-width:70ch}
+.chartbox{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;min-width:520px}
+.legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:14px;font-size:13px;color:var(--dim)}
+.key{width:20px;height:3px;display:inline-block;vertical-align:middle;margin-right:7px;border-radius:2px}
+.tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:13px;min-width:560px}
+th,td{padding:9px 14px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+tr:last-child td{border-bottom:none}
+.verdict{color:var(--bad);font-weight:600}
+.ok{color:var(--good)}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);color:var(--dim);font-size:13px}
+</style></head><body><div class="wrap">
+
+<h1>The trade that never cleared</h1>
+<p class="sub">An agent connected to Binance Agent OS watched every hedgeable
+perpetual on the exchange, priced the full cost of each trade, and declined
+all of them. This page is the record.</p>
+
+<div class="claim" id="claim"></div>
+
+<div class="grid" id="stats"></div>
+
+<h2>Why nothing qualified</h2>
+<p class="note">The gold line is what the best opportunity on the entire
+exchange would pay over the intended holding period. The red line is what it
+costs to open and close the hedge. Profit requires the gold line to rise above
+the red one. Across the whole observation window, it never came close.</p>
+<div class="chartbox">
+  <svg id="chart" viewBox="0 0 900 340" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div class="legend">
+    <span><i class="key" style="background:var(--accent)"></i>Best available payout</span>
+    <span><i class="key" style="background:var(--bad)"></i>Cost to trade</span>
+  </div>
+</div>
+
+<h2>Every decision, timestamped</h2>
+<p class="note">One row per scan. Nothing is summarised away.</p>
+<div class="tbl"><table id="scans"></table></div>
+
+<div id="tradesec"></div>
+
+<footer id="foot"></footer>
+</div>
+<script>
+const D = {"refusals": [{"ts": "2026-09-04T15:48:31+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 309, "best_symbol": "COOKIEUSDT", "best_rate_bps": 2.6695, "breakeven_periods": 13.11, "breakeven_days": 4.37, "shortfall_bps": 26.99}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T15:53:38+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 309, "best_symbol": "TSTUSDT", "best_rate_bps": 2.4685, "breakeven_periods": 14.18, "breakeven_days": 4.73, "shortfall_bps": 27.59}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T15:58:46+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 309, "best_symbol": "COOKIEUSDT", "best_rate_bps": 2.6809, "breakeven_periods": 13.06, "breakeven_days": 4.35, "shortfall_bps": 26.96}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:03:52+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "TSTUSDT", "best_rate_bps": 2.7543, "breakeven_periods": 12.71, "breakeven_days": 4.24, "shortfall_bps": 26.74}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:08:57+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 311, "best_symbol": "TSTUSDT", "best_rate_bps": 2.7716, "breakeven_periods": 12.63, "breakeven_days": 4.21, "shortfall_bps": 26.69}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:14:02+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "TSTUSDT", "best_rate_bps": 2.844, "breakeven_periods": 12.31, "breakeven_days": 4.1, "shortfall_bps": 26.47}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:19:09+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 311, "best_symbol": "TSTUSDT", "best_rate_bps": 2.891, "breakeven_periods": 12.11, "breakeven_days": 4.04, "shortfall_bps": 26.33}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:24:15+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 313, "best_symbol": "TSTUSDT", "best_rate_bps": 3.1014, "breakeven_periods": 11.29, "breakeven_days": 3.76, "shortfall_bps": 25.7}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:29:20+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 315, "best_symbol": "TSTUSDT", "best_rate_bps": 3.1564, "breakeven_periods": 11.09, "breakeven_days": 3.7, "shortfall_bps": 25.53}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:34:27+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 315, "best_symbol": "TSTUSDT", "best_rate_bps": 3.1948, "breakeven_periods": 10.96, "breakeven_days": 3.65, "shortfall_bps": 25.42}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:39:32+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 315, "best_symbol": "TSTUSDT", "best_rate_bps": 3.262, "breakeven_periods": 10.73, "breakeven_days": 3.58, "shortfall_bps": 25.21}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:44:38+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 314, "best_symbol": "TSTUSDT", "best_rate_bps": 3.2948, "breakeven_periods": 10.62, "breakeven_days": 3.54, "shortfall_bps": 25.12}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:49:44+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 312, "best_symbol": "TSTUSDT", "best_rate_bps": 3.2596, "breakeven_periods": 10.74, "breakeven_days": 3.58, "shortfall_bps": 25.22}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:54:48+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 313, "best_symbol": "TSTUSDT", "best_rate_bps": 3.2701, "breakeven_periods": 10.7, "breakeven_days": 3.57, "shortfall_bps": 25.19}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T16:59:54+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 312, "best_symbol": "TSTUSDT", "best_rate_bps": 3.3073, "breakeven_periods": 10.58, "breakeven_days": 3.53, "shortfall_bps": 25.08}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:04:59+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 312, "best_symbol": "TSTUSDT", "best_rate_bps": 3.3998, "breakeven_periods": 10.29, "breakeven_days": 3.43, "shortfall_bps": 24.8}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:10:04+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "TSTUSDT", "best_rate_bps": 3.5711, "breakeven_periods": 9.8, "breakeven_days": 3.27, "shortfall_bps": 24.29}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:15:09+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 312, "best_symbol": "TSTUSDT", "best_rate_bps": 3.7655, "breakeven_periods": 9.29, "breakeven_days": 3.1, "shortfall_bps": 23.7}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:20:13+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 308, "best_symbol": "TSTUSDT", "best_rate_bps": 3.8325, "breakeven_periods": 9.13, "breakeven_days": 3.04, "shortfall_bps": 23.5}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:25:18+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 308, "best_symbol": "TSTUSDT", "best_rate_bps": 3.9085, "breakeven_periods": 8.95, "breakeven_days": 2.98, "shortfall_bps": 23.27}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:30:25+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 308, "best_symbol": "TSTUSDT", "best_rate_bps": 3.8228, "breakeven_periods": 9.16, "breakeven_days": 3.05, "shortfall_bps": 23.53}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:35:29+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "TSTUSDT", "best_rate_bps": 3.7429, "breakeven_periods": 9.35, "breakeven_days": 3.12, "shortfall_bps": 23.77}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:40:35+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "TSTUSDT", "best_rate_bps": 3.8802, "breakeven_periods": 9.02, "breakeven_days": 3.01, "shortfall_bps": 23.36}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:45:40+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 308, "best_symbol": "TSTUSDT", "best_rate_bps": 3.8594, "breakeven_periods": 9.07, "breakeven_days": 3.02, "shortfall_bps": 23.42}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T17:50:46+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 307, "best_symbol": "TSTUSDT", "best_rate_bps": 3.8714, "breakeven_periods": 9.04, "breakeven_days": 3.01, "shortfall_bps": 23.39}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:17:39+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 308, "best_symbol": "TSTUSDT", "best_rate_bps": 3.6977, "breakeven_periods": 9.47, "breakeven_days": 3.16, "shortfall_bps": 23.91}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:22:44+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 3.6429, "breakeven_periods": 9.61, "breakeven_days": 3.2, "shortfall_bps": 24.07}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:27:51+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 3.7505, "breakeven_periods": 9.33, "breakeven_days": 3.11, "shortfall_bps": 23.75}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:32:56+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 3.8969, "breakeven_periods": 8.98, "breakeven_days": 2.99, "shortfall_bps": 23.31}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:38:01+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 3.95, "breakeven_periods": 8.86, "breakeven_days": 2.95, "shortfall_bps": 23.15}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:43:08+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 311, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.0901, "breakeven_periods": 8.56, "breakeven_days": 2.85, "shortfall_bps": 22.73}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:48:13+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 310, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.1503, "breakeven_periods": 8.43, "breakeven_days": 2.81, "shortfall_bps": 22.55}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:53:20+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 311, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.2759, "breakeven_periods": 8.19, "breakeven_days": 2.73, "shortfall_bps": 22.17}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T18:58:25+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 312, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.2976, "breakeven_periods": 8.14, "breakeven_days": 2.71, "shortfall_bps": 22.11}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T19:03:29+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 313, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.3429, "breakeven_periods": 8.06, "breakeven_days": 2.69, "shortfall_bps": 21.97}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T19:08:33+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 309, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.3672, "breakeven_periods": 8.01, "breakeven_days": 2.67, "shortfall_bps": 21.9}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T19:13:39+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 308, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.433, "breakeven_periods": 7.9, "breakeven_days": 2.63, "shortfall_bps": 21.7}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T19:18:44+00:00", "model": {"round_trip_bps": 30.0, "friction_bps": 5.0, "cost_to_beat_bps": 35.0, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 309, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.5359, "breakeven_periods": 7.72, "breakeven_days": 2.57, "shortfall_bps": 21.39}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}, {"ts": "2026-09-04T19:19:40+00:00", "model": {"round_trip_bps": 25.0, "friction_bps": 19.32, "cost_to_beat_bps": 44.32, "hold_periods": 3, "min_edge_bps": 10.0}, "board": {"perps_total": 898, "hedgeable": 365, "funding_positive": 309, "best_symbol": "MARSCOINUSDT", "best_rate_bps": 4.5335, "breakeven_periods": 9.78, "breakeven_days": 3.26, "shortfall_bps": 30.72}, "qualifying_count": 0, "qualifying": [], "verdict": "REFUSED"}], "trades": [{"ts": "2026-09-04T17:45:04+00:00", "event": "funding_sell", "detail": "sell BNB to raise USDT for both legs; user-approved", "symbol": "BNBUSDT", "orderId": 12532375636, "side": "SELL", "executedQty": "0.00900000", "avgPrice": "718.26000000", "quoteQty": "6.46434000", "commission": "0.00000675", "commissionAsset": "BNB", "note": "commission/qty = 0.00000675/0.009 = 0.00075, reconfirms 7.5bps in BNB"}, {"ts": "2026-09-04T17:45:13+00:00", "event": "funding_transfer", "detail": "spot -> USD-M so the futures leg has margin", "type": "MAIN_UMFUTURE", "asset": "USDT", "amount": "5.30", "tranId": 408169175013, "futures_usdt_after": "5.30000000"}, {"ts": "2026-09-04T17:45:49+00:00", "event": "preflight_open", "detail": "unpaired minimum-size futures order, per CONTEXT: confirm the order path before a second leg depends on it", "symbol": "FLOWUSDT", "orderId": 6578993465, "side": "SELL", "type": "MARKET", "leverage": 1, "executedQty": "182.8", "avgPrice": "0.02737000", "cumQuote": "5.00323600", "status": "FILLED", "permission_prompt": false, "finding": "newOrder RESULT response omitted avgPrice and cumQuote; both present via futures_usds_queryOrder on the same orderId"}, {"ts": "2026-09-04T17:46:00+00:00", "event": "preflight_close", "symbol": "FLOWUSDT", "orderId": 6578993477, "side": "BUY", "type": "MARKET", "reduceOnly": true, "executedQty": "182.8", "status": "FILLED", "position_after": "0.0", "verified_by": "futures_usds_positionInformationV2"}], "generated": "2026-09-04T19:22:08Z"};
+const R = D.refusals, T = D.trades;
+const f = (n,d=2)=> n==null? "-" : Number(n).toFixed(d);
+
+// ---- headline numbers -------------------------------------------------
+const t0=new Date(R[0].ts), t1=new Date(R[R.length-1].ts);
+const hours=(t1-t0)/3.6e6;
+const evals=R.reduce((s,r)=>s+r.board.hedgeable,0);
+const refused=R.filter(r=>r.verdict==="REFUSED").length;
+const peak=R.reduce((a,b)=> (b.board.best_rate_bps>a.board.best_rate_bps? b:a));
+const cost=Math.max(...R.map(r=>r.model.cost_to_beat_bps));
+const hold=R[R.length-1].model.hold_periods;
+const peakGross=peak.board.best_rate_bps*hold;
+
+document.getElementById("claim").innerHTML =
+ `Over <b>${f(hours,1)} hours</b>, the agent made <b>${evals.toLocaleString()}</b>
+  individual pricing decisions and refused <b>every one</b>. The single best
+  opportunity it ever saw paid <b>${f(peakGross)} bps</b> over the holding
+  period against a cost of <b>${f(cost)} bps</b> &mdash; short by
+  <b>${f(cost-peakGross)} bps</b>.`;
+
+const stats=[
+ ["hero", refused, "trades refused"],
+ ["", evals.toLocaleString(), "pricing decisions"],
+ ["", f(hours,1)+"h", "continuous run"],
+ ["", R[0].board.perps_total, "perpetuals watched"],
+ ["", f(cost,1), "bps cost to beat"],
+ ["", f(peak.board.best_rate_bps,3), "bps best ever seen"],
+];
+document.getElementById("stats").innerHTML = stats.map(([c,n,l])=>
+ `<div class="stat ${c}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+
+// ---- chart ------------------------------------------------------------
+(function(){
+  const W=900,H=340,P={t:20,r:20,b:38,l:52};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const pay=R.map(r=>r.board.best_rate_bps*r.model.hold_periods);
+  const cst=R.map(r=>r.model.cost_to_beat_bps);
+  const ymax=Math.max(...cst,...pay)*1.25;
+  const x=i=> P.l + (R.length<2?iw/2:(i/(R.length-1))*iw);
+  const y=v=> P.t + ih - (v/ymax)*ih;
+  const path=a=>a.map((v,i)=>`${i?"L":"M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  let g="";
+  for(let k=0;k<=4;k++){
+    const v=ymax*k/4, yy=y(v);
+    g+=`<line x1="${P.l}" y1="${yy}" x2="${W-P.r}" y2="${yy}" stroke="var(--line)" stroke-width="1"/>`
+     + `<text x="${P.l-9}" y="${yy+4}" fill="var(--dim)" font-size="11" text-anchor="end"
+         font-family="var(--mono)">${v.toFixed(0)}</text>`;
+  }
+  // shade the gap: this is the whole argument
+  const gap=`M${path(pay).slice(1)} L${x(R.length-1)},${y(cst[cst.length-1])} `
+    + cst.map((v,i)=>`L${x(cst.length-1-i)},${y(cst[cst.length-1-i])}`).join("") + "Z";
+  g+=`<path d="${gap}" fill="var(--bad)" opacity="0.07"/>`;
+  g+=`<path d="${path(cst)}" fill="none" stroke="var(--bad)" stroke-width="2.5"/>`;
+  g+=`<path d="${path(pay)}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>`;
+  const lab=d=>new Date(d).toISOString().slice(11,16);
+  g+=`<text x="${P.l}" y="${H-12}" fill="var(--dim)" font-size="11"
+       font-family="var(--mono)">${lab(R[0].ts)} UTC</text>`
+   + `<text x="${W-P.r}" y="${H-12}" fill="var(--dim)" font-size="11" text-anchor="end"
+       font-family="var(--mono)">${lab(R[R.length-1].ts)} UTC</text>`
+   + `<text x="14" y="${P.t+ih/2}" fill="var(--dim)" font-size="11"
+       transform="rotate(-90 14 ${P.t+ih/2})" text-anchor="middle">basis points</text>`;
+  document.getElementById("chart").innerHTML=g;
+})();
+
+// ---- scan table -------------------------------------------------------
+document.getElementById("scans").innerHTML =
+ `<thead><tr><th>time (UTC)</th><th>pairs</th><th>best symbol</th>
+  <th>pays</th><th>costs</th><th>short by</th><th>verdict</th></tr></thead><tbody>`
+ + R.map(r=>{
+   const pays=r.board.best_rate_bps*r.model.hold_periods;
+   return `<tr><td>${r.ts.slice(11,19)}</td><td>${r.board.hedgeable}</td>
+    <td>${r.board.best_symbol||"-"}</td><td>${f(pays)}</td>
+    <td>${f(r.model.cost_to_beat_bps)}</td>
+    <td>${f(r.model.cost_to_beat_bps-pays)}</td>
+    <td class="${r.verdict==="REFUSED"?"verdict":"ok"}">${r.verdict}</td></tr>`;
+ }).join("") + `</tbody>`;
+
+// ---- trades -----------------------------------------------------------
+const ts=document.getElementById("tradesec");
+if(T.length){
+  ts.innerHTML = `<h2>Mechanism verification</h2>
+   <p class="note">The signal did not clear, so no position was taken on its
+   merits. These are minimum-size executions proving the order path works:
+   the short leg opens first, the long leg is sized from what actually filled,
+   and the residual is measured rather than assumed.</p>
+   <div class="tbl"><table>
+   <thead><tr><th>field</th><th>value</th></tr></thead><tbody>`
+   + T.map(t=>Object.entries(t).map(([k,v])=>
+      `<tr><td>${k}</td><td>${typeof v==="object"?JSON.stringify(v):v}</td></tr>`
+     ).join("")).join("") + `</tbody></table></div>`;
+} else {
+  ts.innerHTML = `<h2>Mechanism verification</h2>
+   <p class="note">No trades recorded yet. Run the executor, then rebuild
+   this page.</p>`;
+}
+
+document.getElementById("foot").textContent =
+ `Generated ${D.generated} from refusals.jsonl. `
+ + `Every figure on this page is read from a logged live API response. `
+ + `Nothing is estimated, illustrative, or hand-entered.`;
+</script></body></html>

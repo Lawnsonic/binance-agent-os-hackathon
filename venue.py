@@ -36,9 +36,40 @@ CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 CACHE_TTL = 3600          # exchangeInfo filters change on the order of weeks
 
 # --- Cost model -------------------------------------------------------
-# Mirrors scanner.py. Verified against this account fee tier, not assumed.
-SPOT_TAKER = Decimal("0.0010")     # 10 bps, charged in the BASE asset on a BUY
+# Verified against this account by live MCP call on 2026-09-04 ~17:45 UTC.
+# Not assumed, not inherited from the docs. The calls, in order:
+#
+#   margin.getBnbBurnStatus          -> {"spotBNBBurn": true}
+#   spot.getAccount                  -> BNB free 0.01399550
+#   spot.accountCommission STRKUSDT  -> standardCommission.taker 0.00100000,
+#        discount {enabledForAccount: true, enabledForSymbol: true,
+#                  discountAsset: "BNB", discount: "0.75000000"}
+#   spot.myTrades BNBUSDT            -> the settled fill that decides it:
+#        0.006 BNB @ 716.21, commission 0.00000450, commissionAsset "BNB"
+#
+# The discount field is ambiguous in the docs ("reduced by this rate" would
+# make 0.75 a 75% cut, i.e. 2.5 bps). The real fill settles it arithmetically:
+# 0.00000450 / 0.006 = 0.00075. So 0.75 is the MULTIPLIER on the standard
+# rate, the effective spot taker is 7.5 bps, and commissionAsset is BNB.
+SPOT_TAKER = Decimal("0.00075")    # 7.5 bps = 10 bps standard x 0.75 BNB discount
 FUT_TAKER = Decimal("0.0005")      # 5 bps, charged in USDT
+
+# Two separate facts, because burn enabled against a dust balance silently
+# falls back to paying the full 10 bps out of the base asset.
+BNB_BURN_ENABLED = True                          # margin.getBnbBurnStatus
+BNB_BALANCE_AT_CHECK = Decimal("0.01399550")     # spot.getAccount, ~10.02 USDT
+                                                 # at the 716.21 fill price
+# Four fills of a ~5 USDT mechanism test owe roughly 0.0000105 BNB in spot
+# commission. The balance above covers that by more than three orders of
+# magnitude, so it is a working reserve rather than dust, and the discount
+# will actually apply.
+BNB_BALANCE_SUFFICIENT = True
+
+# The consequence that matters for hedging: commission is deducted in BNB,
+# so a spot BUY delivers the FULL base quantity ordered. The long leg does
+# not land short, and there is no fee-driven unhedged residual. This
+# disproves the 10 bps base-asset fee residual assumed before the check.
+FEE_PAID_IN_BASE_ASSET = False
 
 
 # --- HTTP -------------------------------------------------------------

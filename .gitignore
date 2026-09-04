@@ -4,3 +4,6 @@ cache/
 .remember/
 .env
 *.env
+*.out
+*.err
+*.log

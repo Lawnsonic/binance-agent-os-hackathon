@@ -19,12 +19,13 @@ step, 0.1 ACE or roughly 36 bps of a $5 leg, can end up unhedged depending
 on where the futures quantity lands. Truncation is therefore not the
 dominant error at this size. The two that are:
 
-  - the spot taker fee, charged in the base asset on a BUY, which leaves the
-    long leg ~10 bps short of the short leg on every symbol; and
   - the cross-venue entry basis, typically 15-25 bps, paid the instant both
-    legs are on.
+    legs are on. This is now the FRICTION constant in scanner.py.
 
-Both are larger than the lot-step residual the cost model was worried about.
+The spot fee was the other suspect, on the theory that a BUY pays commission
+in the base asset and so lands short. A live check on 2026-09-04 disproved
+it for this account: commission settles in BNB at 7.5 bps, the base quantity
+arrives intact, and the fee residual is zero. See venue.py for the calls.
 
 So for every symbol listed on both venues this computes, from live filters
 and live top-of-book:
@@ -35,9 +36,9 @@ and live top-of-book:
   step_resid     fut_qty - spot_qty, the unhedged remainder, in base and USD
   worst_step     one spot lot step as bps of the leg, the bound on that
                  remainder at this size regardless of where price ticks
-  fee_resid      spot taker fee is charged in the BASE asset on a BUY, so
-                 the spot leg lands ~10 bps short of what was ordered.
-                 Labelled assumed: it is zero if fees are paid in BNB.
+  fee_resid      zero on this account. Verified 2026-09-04: spot commission
+                 settles in BNB, so a BUY delivers the full base quantity.
+                 Reverts to the taker rate out of base if burn is off.
   spread         measured, both venues, both sides. Replaces the assumed
                  5 bps friction constant with a number from the book.
 
@@ -119,7 +120,15 @@ def plan(fsym, ssym, fbook, sbook, target):
 
     step_resid = q - spot_q                          # net SHORT this much base
     step_resid_usd = step_resid * p_spot
-    fee_resid = spot_q * venue.SPOT_TAKER            # assumed: fee taken in base
+    # Verified 2026-09-04, not assumed: this account pays spot commission in
+    # BNB (see venue.py), so a BUY delivers the full base quantity and the
+    # long leg does not land short. Zero here is a measurement, not a hope.
+    # If burn were off, or the BNB reserve ran to dust, this reverts to the
+    # full taker rate coming out of the base asset.
+    if venue.FEE_PAID_IN_BASE_ASSET:
+        fee_resid = spot_q * venue.SPOT_TAKER
+    else:
+        fee_resid = ZERO
     fee_resid_usd = fee_resid * p_spot
 
     return {
