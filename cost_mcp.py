@@ -1,7 +1,11 @@
 """
 costcheck: an MCP server that prices a proposed trade before it is placed.
 
-    claude mcp add costcheck -- python cost_mcp.py
+    python cost_mcp.py
+
+Launched by the client over stdio. Registration is a command and an args
+pair in whatever config file the client reads; see the MCP server section
+of the README. Nothing here is specific to one agent harness.
 
 One tool, stdio transport, no port, no OAuth, no credentials. It reads public
 order books and does arithmetic. It cannot place an order, cannot move funds,

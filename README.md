@@ -149,71 +149,240 @@ any Agent OS agent can reach.
 
 ## The MCP server
 
+`cost_mcp.py` is a local MCP server. It speaks the Model Context Protocol over
+stdio and exposes exactly one tool, `evaluate_trade`, which prices a proposed
+delta-neutral hedge against live order books and returns a structured verdict.
+Any MCP-capable client can call it. Nothing in it is specific to one agent
+harness.
+
+### Contract
+
+```
+command       python cost_mcp.py
+transport     stdio, JSON-RPC on stdin and stdout
+port          none
+credentials   none, no API key and no OAuth
+network       outbound HTTPS to public Binance market data endpoints only
+tools         evaluate_trade
+```
+
+It reads public order books and does arithmetic. It cannot place an order,
+cannot move funds and holds no keys, so the worst a compromised copy of it can
+do is quote a bad number. That is also why it is safe to leave connected.
+
+Because stdout carries the protocol stream, the server writes its diagnostics
+to stderr and redirects stdout during import, so nothing a dependency prints
+can corrupt the transport.
+
+### Registering it
+
+Most clients accept this block, in their own config file:
+
+```json
+{"mcpServers": {"costcheck": {"command": "/abs/path/python", "args": ["/abs/path/cost_mcp.py"]}}}
+```
+
+Both paths must be absolute. The client launches the process itself, and its
+working directory is not this repository. `/abs/path/python` is the interpreter
+of the environment that has `requirements.txt` installed, which on Windows is
+usually `...\.venv\Scripts\python.exe`. `/abs/path/cost_mcp.py` is this file's
+full path.
+
+Clients that read that shape:
+
+| Client | Where the block goes |
+| --- | --- |
+| Claude Code | `.mcp.json` in the project root, or user scope via `claude mcp add` |
+| Claude Desktop | `claude_desktop_config.json`, reachable from Settings, Developer, Edit Config |
+| VS Code | `.vscode/mcp.json`, the same `command` and `args` pair under its own top-level key |
+| Codex | `~/.codex/config.toml`, the same `command` and `args` pair expressed as TOML |
+| Any MCP client | Anything that can spawn a stdio server takes the same two fields |
+
+Claude Code has a convenience path that writes the entry for you:
+
 ```bash
-claude mcp add costcheck -- python cost_mcp.py
+claude mcp add costcheck -- /abs/path/python /abs/path/cost_mcp.py
+/mcp                                              # confirm it connected
 ```
 
-One tool, stdio transport. No port, no OAuth, no credentials on disk. It reads
-public order books and does arithmetic; it cannot place an order and cannot
-move funds, which is also why it is safe to leave connected.
+That is one way in, not the way in. The server does not know or care which
+client spawned it.
+
+### The tool
 
 ```
-evaluate_trade(symbol, notional_usdt, hold_periods, min_edge_bps)
+evaluate_trade(symbol, notional_usdt=5.0, hold_periods=3, min_edge_bps=10.0)
 ```
+
+| Parameter | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `symbol` | string | required | A symbol listed on both USDT spot and USD-M futures, for example `STRKUSDT`. Case is normalised. |
+| `notional_usdt` | float | `5.0` | Intended size of one leg. Sized up to the venue minimum if it is below it, and the object says when that happened, because a quote for a size the venue will not accept is not a quote. |
+| `hold_periods` | int | `3` | Number of 8h funding settlements the carry is underwritten over. |
+| `min_edge_bps` | float | `10.0` | Profit required above all costs and buffers before the tool returns APPROVE. |
 
 It returns a decision object rather than prose, and the shape is the argument.
 Prose is the failure mode: a paragraph explaining that a trade looks expensive
 is something a model can talk itself past. `"decision": "REJECT",
-"shortfall_bps": 53.09` is not.
+"shortfall_bps": 74.1` is not.
+
+A complete response, measured live at the timestamp it carries:
 
 ```json
 {
+  "schema_version": "1.0.0",
+  "symbol": "HOTUSDT",
+  "strategy": "funding_carry_delta_neutral",
+  "measured_at": "2026-09-05T17:45:27Z",
+  "expires_at": "2026-09-05T17:45:37Z",
+  "ttl_seconds": 10,
+  "size": {
+    "requested_notional_usdt": 5.0,
+    "futures_qty": "13242",
+    "spot_qty": "13242.00000000",
+    "priced_notional_usdt": 5.0002,
+    "scaled_to_venue_minimum": true,
+    "lot_residual_base": "0.00000000",
+    "lot_residual_usdt": 0.0,
+    "depth_cover_x": 21016.2
+  },
+  "cost_bps": {
+    "fees": 25.0, "entry_basis": 10.59, "exit_spread": 14.56,
+    "lot_residual": 0.0, "total": 50.15
+  },
+  "edge_bps": {
+    "funding_per_settlement": 1.0, "hold_periods": 3, "gross_funding": 3.0,
+    "net": -47.15, "risk_adjusted": -64.1, "min_edge_required": 10.0
+  },
+  "uncertainty_bps": {
+    "depth_impact": 0.0, "calibration_gap": 16.95, "calibration_n": 1,
+    "total_buffer": 16.95
+  },
+  "evidence": {
+    "spot_ask_vwap": "0.00037800", "futures_bid_vwap": "0.0003776",
+    "spot_bid_vwap": "0.00037700", "futures_ask_vwap": "0.0003777",
+    "entry_basis_measured_bps": 10.59,
+    "entry_basis_top_of_book_bps": 10.59,
+    "hours_to_next_funding": 6.24,
+    "funding_prints_bps": ["1.00000000", "2.62590000", "1.00000000"],
+    "funding_sign_persistent": true,
+    "book_depth_levels": 100,
+    "quote_latency_ms": 3452,
+    "fee_basis": "spot 7.5 bps and futures 5 bps, verified 2026-09-04 against settled fills; see venue.py"
+  },
   "decision": "REJECT",
   "reason": "insufficient_edge",
-  "symbol": "HOTUSDT",
-  "measured_at": "2026-09-05T11:21:35Z",
-  "expires_at":  "2026-09-05T11:21:45Z",
-  "cost_bps": { "fees": 25.0, "entry_basis": 0.0, "exit_spread": 14.51,
-                "lot_residual": 0.0, "total": 39.51 },
-  "edge_bps": { "gross_funding": 13.37, "net": -26.14, "risk_adjusted": -43.09 },
-  "uncertainty_bps": { "depth_impact": 0.0, "calibration_gap": 16.95,
-                       "calibration_n": 1 },
-  "shortfall_bps": 53.09,
-  "max_notional_usdt": 0.0
+  "max_notional_usdt": 0.0,
+  "shortfall_bps": 74.1
 }
 ```
 
-Three fields carry most of the weight.
+### Every field
 
-**`expires_at`** is seconds after `measured_at`, not minutes. That is not
-caution for its own sake, it is the direct lesson of the paired run: this
-project measured a basis, acted on it under a minute later, and paid 2.25x
-what it measured. A cost quote with a long life is a lie about how fast the
-quantity moves.
+**Envelope**
 
-**`cost_bps.entry_basis`** is measured by walking the actual depth ladder for
-the actual quantity, not read off top of book. Top of book is a price for the
-first slice of an order, not for the order. The difference between the two
-shows up in `uncertainty_bps.depth_impact` rather than being quietly absorbed.
+- `schema_version`: version of this object's shape, bumped if a field changes meaning.
+- `symbol`: the symbol as the oracle resolved it.
+- `strategy`: what was priced. Currently always `funding_carry_delta_neutral`, long spot against short USD-M perp.
+- `measured_at`: UTC instant the books were read.
+- `expires_at`: `measured_at` plus `ttl_seconds`. After this the decision is void.
+- `ttl_seconds`: lifetime of the decision, currently 10.
+- `decision`: `APPROVE` or `REJECT`. Nothing else.
+- `reason`: machine-readable verdict code. One of `edge_clears_cost`, `insufficient_edge`, `funding_not_positive`, `funding_sign_not_persistent`, `too_close_to_settlement`, `no_futures_market`, `no_spot_market`, `base_asset_mismatch`, `no_two_sided_market`, `below_min_notional`, `insufficient_depth`, `pricing_failed`.
+- `detail`: present on refusals that have something to add in words. Never the only carrier of a number.
+- `max_notional_usdt`: the size this decision authorises, in USDT, on this symbol. `0.0` on every REJECT.
+- `shortfall_bps`: REJECT only. How far the risk-adjusted edge fell below `min_edge_bps`, which is the distance to a yes.
+- `authorization`: APPROVE only, described below.
 
-**`uncertainty_bps.calibration_gap`** is read back out of `trades.jsonl`: how
-far this model has under-charged on executions that actually settled. It is
-16.95 bps with `calibration_n: 1`, and the `n` is published precisely because
-one execution is an anecdote rather than a distribution. No standard deviation
-is quoted, because there isn't one to quote yet. It grows with the log.
+**`size`**, what was actually priced
 
-An APPROVE additionally carries an `authorization` block naming the symbol,
-the two legs in order, the size, a `max_entry_basis_bps` ceiling and the same
-expiry. The agent is not handed permission to trade. It is handed permission
-to make this one economic decision, at this size, for the next few seconds.
+- `requested_notional_usdt`: what the caller asked for.
+- `futures_qty`, `spot_qty`: leg quantities after each venue's lot step.
+- `priced_notional_usdt`: the notional the quote actually covers, which is the number that matters if the request was scaled.
+- `scaled_to_venue_minimum`: true when the request was below the venue minimum and was raised to it.
+- `lot_residual_base`, `lot_residual_usdt`: the unhedgeable remainder created by the two venues having different lot steps.
+- `depth_cover_x`: how many times the visible book covers this order. A thin book shows up here before it shows up in a fill.
 
-Every path out of the tool is a decision object, and every path that could not
-finish the arithmetic returns REJECT. A network timeout, a delisted symbol and
-a bug in the file all mean the same thing to the caller: the cost of this trade
-is unknown, and an unknown cost is not a green light. Fail closed.
+**`cost_bps`**, the charge stack, in basis points of notional
 
-`CLAUDE.md` carries the policy that requires the call. Its limits are stated
-in Limitations below, and they are real.
+- `fees`: four taker fills, spot and futures, both directions. Verified against settled fills, not read off a schedule.
+- `entry_basis`: the cross-venue gap paid on the way in, measured by walking the depth ladder for the actual quantity rather than reading top of book. Top of book is a price for the first slice of an order, not for the order.
+- `exit_spread`: the round trip out, priced the same way.
+- `lot_residual`: cost of the unhedged remainder above.
+- `total`: the sum, and the number an edge has to beat.
+
+A favourable dislocation, meaning a negative entry basis, is reported in
+`evidence` at its measured value but floored to zero here. A dislocation in
+your favour that lasts a second should not be allowed to manufacture a trade.
+
+**`edge_bps`**, what the trade earns
+
+- `funding_per_settlement`: current funding rate, in bps per 8h.
+- `hold_periods`: settlements underwritten, echoed from the call.
+- `gross_funding`: rate times periods, before any cost.
+- `net`: `gross_funding` minus `cost_bps.total`.
+- `risk_adjusted`: `net` minus `uncertainty_bps.total_buffer`. This is the number compared against `min_edge_required`.
+- `min_edge_required`: echoed from `min_edge_bps`.
+
+**`uncertainty_bps`**, what the model knows it does not know
+
+- `depth_impact`: how much worse the VWAP at this size is than top of book. Measured, not modelled.
+- `calibration_gap`: how far this model has under-charged on executions that actually settled, read back out of `trades.jsonl`.
+- `calibration_n`: how many settled executions that average is built on. It is published because at `n: 1` the gap is an anecdote rather than a distribution. No standard deviation is quoted, because there is not one to quote yet. It grows with the log.
+- `total_buffer`: the two above, summed, and subtracted from `net`.
+
+**`evidence`**, the inputs, so the verdict can be recomputed by hand
+
+VWAPs for all four legs, the measured entry basis before flooring, the same
+basis at top of book for comparison, hours to next funding, the recent funding
+prints and whether their sign held, book depth read, quote latency, and the
+provenance of the fee numbers.
+
+**`authorization`**, on APPROVE only
+
+Names the symbol, the two legs in execution order, the quantity, a
+`max_entry_basis_bps` ceiling and the same expiry. An approval is not
+permission to trade. It is permission to make this one economic decision, at
+this size, for the next few seconds.
+
+### Two rules the caller has to honour
+
+**REJECT is binding.** It is not advice to weigh against other considerations.
+That includes `reason: "pricing_failed"`, which means the cost is unknown
+rather than acceptable, and an unknown cost is not a green light. Every path
+out of the tool is a decision object, and every path that could not finish the
+arithmetic returns REJECT. A network timeout, a delisted symbol and a bug in
+the file all mean the same thing to the caller. Fail closed.
+
+**Decisions expire after 10 seconds.** Not minutes. That is not caution for
+its own sake, it is the direct lesson of the paired run below: this project
+measured a basis, acted on it under a minute later, and paid 2.25x what it
+measured. The cross-venue basis on STRKUSDT moved from 13.55 to 30.50 bps
+inside that minute. A cost quote with a long life is a lie about how fast the
+quantity moves. If `expires_at` has passed, call again rather than acting on
+what you have.
+
+### The policy is the caller's job
+
+Neither rule is enforced by this server, and implying otherwise would be the
+most dangerous claim in this repository. The server has no idea whether the
+client that called it went on to place the order. A client holding raw order
+tools can read REJECT and trade anyway.
+
+In this repository the rule lives in `CLAUDE.md`, which is Claude Code's
+convention for standing instructions. That file is not portable. A different
+client needs the equivalent text wherever it reads instructions: `AGENTS.md`
+for Codex, the system prompt or custom instructions for Claude Desktop, the
+rules or workspace instructions file for VS Code. The wording matters less
+than the three clauses: call `evaluate_trade` before any order that opens or
+closes a position, treat REJECT as binding, and re-call rather than act on an
+expired decision.
+
+Making the check unbypassable requires a gateway that holds the Binance
+credentials and refuses to forward an unpriced order. That is a different
+piece of software and it is not built here. What is built here is the
+arithmetic such a gateway would have to run, which is the part that has to be
+right first. See Limitations.
 
 ## The cost model
 
@@ -456,13 +625,20 @@ worth less than one you declare.
 - **Futures commission in the reconciliation is derived**, not read from a
   fill: the order response does not carry it. It is computed from the
   verified 5 bps rate and explicitly labelled `[DERIVED]` in the output.
-- **The cost model is a snapshot, and the paired run proved how poor a
-  snapshot is.** The entry basis was measured at one moment on one symbol.
-  It moves fast: 6.8 bps measured at plan time, 30.5 bps realised on the fill
-  under a minute later, against 19.32 bps carried in the constant.
-  `python select_symbol.py --refresh` re-derives it, and the constant's
-  comment says so, but a constant is the wrong shape for this quantity. That
-  is what the MCP server in future work is for.
+- **The constant-based path is still a snapshot.** `scanner.py` prices the
+  board against `FRICTION = 0.001932`, one entry basis measured on one symbol
+  at one moment, and the paired run proved how poor a snapshot is: 6.8 bps at
+  plan time, 30.5 bps realised on the fill under a minute later, against the
+  19.32 bps in the constant. `python select_symbol.py --refresh` re-derives it
+  and the constant's comment says so, but a constant is the wrong shape for a
+  quantity that moves that fast. The correction is built, not pending:
+  `cost_oracle.py` and the `costcheck` MCP server measure the basis at
+  evaluation time, by walking the live depth ladder at the size actually being
+  traded, and expire the answer after 10 seconds. The scanner keeps its
+  constant deliberately, so that all 25,185 refusals in the window are
+  measured against one unchanging threshold; anything about to place an order
+  goes through `evaluate_trade` instead. `executor.py` has a different defect,
+  priced live but on the wrong term, in the bullet below.
 - **The oracle is advisory. It is not a security boundary.** This is the
   most important limitation here and it would be dishonest to bury it. The
   agent still holds `spot_newOrder` and `futures_usds_newOrder` directly. It
@@ -517,12 +693,15 @@ is missing. A guardrail that refuses everything is only obviously correct once
 you can show what the refusals avoided. Everything needed is already in the
 log format; it needs a follow-up pass and enough elapsed time to settle.
 
-**Close the loop on the model itself.** `calibration_gap` is the first stitch
-of this and it currently reads `n=1`. Every reconciled execution should feed
-its realised cost back so the oracle learns where its own estimates fail, in
-which direction, and on which symbols. The one data point so far says the
-model under-charges by 16.95 bps. One point is an anecdote. The mechanism to
-turn it into something better already exists and is wired up.
+**Give the calibration loop something to learn from.** The loop itself is
+built: `calibration()` re-reads `trades.jsonl` on every call, so each
+reconciled execution appended to it widens the buffer the next decision is
+charged automatically, with no code change. What it lacks is executions. It
+currently reads `n=1`, and that single point says the model under-charges by
+16.95 bps. One point is an anecdote, and the object publishes `n` alongside
+the gap precisely so a caller can see that. What turns it into a distribution,
+with a direction and a per-symbol shape, is elapsed time and settled fills
+rather than more software.
 
 ## Running it
 
@@ -538,8 +717,7 @@ python refusal_log.py --loop --every 300
 python report_refusals.py           # aggregate
 python build_report.py --open       # standalone report.html
 
-claude mcp add costcheck -- python cost_mcp.py    # expose it to an agent
-/mcp                                              # confirm it connected
+python cost_mcp.py                  # the MCP server itself, stdio, for any client
 ```
 
 Execution runs through the Binance MCP server and is driven by the agent
