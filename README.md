@@ -2,10 +2,20 @@
 
 **A pre-trade cost oracle for Binance Agent OS.**
 
-An LLM connected to execution tools has no native cost model. It reasons in
-sentences while the loss lives in basis points. This is the layer that prices
-the complete round trip against live order books and refuses the trade when
-the arithmetic does not clear.
+A language model can decide what trade it wants to make. It should not be the
+thing that decides whether that trade is economically valid.
+
+Those are two different jobs and they want two different machines. Choosing
+what to trade is judgement about a market, and a model is good at it. Deciding
+whether the trade survives its own costs is arithmetic against live order
+books, at the size actually being traded, in basis points, and a model is not
+good at that at all. It reasons in sentences while the loss lives three
+decimal places down.
+
+This repository is the second job, done deterministically in Python and handed
+back to the agent as a number rather than as advice. It ships as an MCP server:
+the agent calls `evaluate_trade` before it places an order and gets a verdict
+with the full arithmetic attached.
 
 ---
 
@@ -29,6 +39,65 @@ Binance Agent OS now lets any language model place real orders. Ask one to
 farm the highest funding rate on the board and it will do so, correctly and
 confidently, and lose about 44 bps per cycle.
 
+## Then the cost oracle was wrong too
+
+This is the part worth reading, and it is why the project ended up somewhere
+more interesting than it started.
+
+The scanner refused every signal on the board for nineteen hours. To prove the
+execution path was real rather than a program that only knows how to print
+"no", a minimum-size hedge was opened and closed on STRKUSDT on 2026-09-05 at
+06:33 UTC. It was declared in advance as a mechanism test, not a trade taken
+on merit.
+
+It cost **55.50 bps** against a predicted **31.77**, and it did not just beat
+the prediction. It beat **the scanner's own 44.32 bps refusal threshold, by
+11.18 bps**, and 44.32 was already the twice-corrected, deliberately
+conservative figure.
+
+Fees behaved exactly as verified: 25.00 bps, to the cent. The entire overshoot
+was the cross-venue entry basis, and the log holds four different values for
+that one quantity inside a single minute:
+
+```
+ 6.80 bps   measured by select_symbol.py on the live book
+13.55 bps   recorded by the executor's own plan, seconds later
+19.32 bps   carried in the FRICTION constant
+30.50 bps   actually paid on the fill
+```
+
+**And the error was not only in the constant. It was in the model.** The
+executor predicted the price cost of a round trip as the spreads it crosses,
+6.77 bps. The fills say the round trip costs the basis you enter at plus the
+basis you exit at, which are only the same number when the two venues are
+equally dislocated at the open and at the close. They were not: nine ticks
+apart going in, level coming out.
+
+```
+open    spot BUY  0.02962    perp SELL 0.02953    basis  +30.43 bps
+close   spot SELL 0.02954    perp BUY  0.02954    basis    0.00 bps
+                                                  ----------------
+entry basis + exit basis                                  30.43 bps
+realised price term, from the reconciliation              30.50 bps
+```
+
+Opening a hedge into a wide positive basis means being long the expensive
+venue and short the cheap one. If the dislocation holds you give the basis
+back on the way out and pay only spreads. If it converges you eat all of it,
+and convergence is the direction a basis tends to move. The old model priced
+the lucky case.
+
+`cost_oracle.py` is that correction: it prices entry basis plus exit spread,
+measured at the size actually being traded, at the moment of the call. Against
+the fills above it returns 30.43 where the spread model returned 6.77.
+
+So the honest summary of this project is not "we built a guardrail." It is:
+**we built a guardrail, pointed it at ourselves, and found our own arithmetic
+was the next thing wrong.** The refusals stand harder for it, not softer.
+Nothing on the board came within 30 bps of clearing, so a threshold that was
+11 bps too low changed no decision in this window. But it would have, on a
+board where something was close.
+
 ## The obvious objection
 
 *Pre-trade cost checks are forty years old. Every professional system has
@@ -44,7 +113,7 @@ written instructions to be careful.
 | # | Assumed | Measured | How it was verified |
 |---|---|---|---|
 | 1 | Spot taker fee **10 bps** | **7.5 bps** | `spot.accountCommission` returned `discount: 0.75`, which the docs gloss ambiguously as "reduced by this rate" (implying 2.5 bps). Two settled fills resolved it arithmetically and agreed: `0.00000450/0.006` and `0.00000675/0.009`, both `= 0.00075`. `commissionAsset` was BNB on both. |
-| 2 | Execution friction **5 bps** | **19.32 bps**, then **30.5 bps** | Wrong twice, both times in the same direction. First: cross-venue entry basis measured by `select_symbol.py` on STRKUSDT at 2026-09-04 17:40 UTC: 19.32 bps, off by a factor of nearly four. Then the paired run of 2026-09-05 06:33 UTC paid **30.5 bps** on the fill (orders 5102989720 / 1521379862), against **6.8 bps** that `select_symbol.py` had measured on the same symbol under a minute earlier, and against the 19.32 carried in the constant. |
+| 2 | Execution friction **5 bps** | **19.32 bps**, then **30.5 bps** | Wrong twice, both times in the same direction. First: cross-venue entry basis measured by `select_symbol.py` on STRKUSDT at 2026-09-04 17:40 UTC: 19.32 bps, off by a factor of nearly four. Then the paired run of 2026-09-05 06:33 UTC paid **30.5 bps** on the fill (orders 5102989720 / 1521379862), against **6.8 bps** that `select_symbol.py` had measured on the same symbol under a minute earlier, **13.55 bps** that the executor wrote into its own plan record, and the 19.32 carried in the constant. |
 | 3 | Lot-step truncation is the **dominant** error at small size | **6 of 356 pairs** | `select_symbol.py` compared both `exchangeInfo` endpoints across every hedgeable pair. Only 6 have a spot step coarser than their futures step; for the rest cross-venue truncation is exactly zero. |
 | 4 | Futures `newOrder` returns the fill price | **It does not** | Preflight order `6578993465` came back `FILLED` with `executedQty` but no `avgPrice` and no `cumQuote`, even at `newOrderRespType=RESULT`. `futures_usds_queryOrder` on the same id has both. Unhandled, this records a fill price of zero. |
 
@@ -56,8 +125,9 @@ language model cannot do by reasoning and exactly what this layer does.
 
 **Assumption 2 is also the only one that was wrong twice**, and the second
 time it was wrong against a number this project had itself measured from a
-live book under a minute before the order. Three values for one quantity
-inside that minute: 6.8 bps measured, 19.32 bps carried, 30.5 bps paid. If
+live book under a minute before the order. Four values for one quantity inside
+that minute: 6.8 bps measured by the selector, 13.55 recorded by the executor's
+own plan, 19.32 carried in the constant, 30.5 paid on the fill. If
 measuring it carefully and then acting a minute later is not good enough,
 then reasoning about it in sentences is not a near miss. It is not the same
 kind of activity. That is the argument, and it is made at this project's own
@@ -74,8 +144,76 @@ capture as its reference implementation.
 
 The reusable part takes a proposed trade, prices the complete round trip
 against live books, and returns a verdict with the arithmetic attached. The
-funding scanner is one caller of it. Any Agent OS trade call could be
-another.
+funding scanner is one caller of it. `cost_mcp.py` is the other, and that one
+any Agent OS agent can reach.
+
+## The MCP server
+
+```bash
+claude mcp add costcheck -- python cost_mcp.py
+```
+
+One tool, stdio transport. No port, no OAuth, no credentials on disk. It reads
+public order books and does arithmetic; it cannot place an order and cannot
+move funds, which is also why it is safe to leave connected.
+
+```
+evaluate_trade(symbol, notional_usdt, hold_periods, min_edge_bps)
+```
+
+It returns a decision object rather than prose, and the shape is the argument.
+Prose is the failure mode: a paragraph explaining that a trade looks expensive
+is something a model can talk itself past. `"decision": "REJECT",
+"shortfall_bps": 53.09` is not.
+
+```json
+{
+  "decision": "REJECT",
+  "reason": "insufficient_edge",
+  "symbol": "HOTUSDT",
+  "measured_at": "2026-09-05T11:21:35Z",
+  "expires_at":  "2026-09-05T11:21:45Z",
+  "cost_bps": { "fees": 25.0, "entry_basis": 0.0, "exit_spread": 14.51,
+                "lot_residual": 0.0, "total": 39.51 },
+  "edge_bps": { "gross_funding": 13.37, "net": -26.14, "risk_adjusted": -43.09 },
+  "uncertainty_bps": { "depth_impact": 0.0, "calibration_gap": 16.95,
+                       "calibration_n": 1 },
+  "shortfall_bps": 53.09,
+  "max_notional_usdt": 0.0
+}
+```
+
+Three fields carry most of the weight.
+
+**`expires_at`** is seconds after `measured_at`, not minutes. That is not
+caution for its own sake, it is the direct lesson of the paired run: this
+project measured a basis, acted on it under a minute later, and paid 2.25x
+what it measured. A cost quote with a long life is a lie about how fast the
+quantity moves.
+
+**`cost_bps.entry_basis`** is measured by walking the actual depth ladder for
+the actual quantity, not read off top of book. Top of book is a price for the
+first slice of an order, not for the order. The difference between the two
+shows up in `uncertainty_bps.depth_impact` rather than being quietly absorbed.
+
+**`uncertainty_bps.calibration_gap`** is read back out of `trades.jsonl`: how
+far this model has under-charged on executions that actually settled. It is
+16.95 bps with `calibration_n: 1`, and the `n` is published precisely because
+one execution is an anecdote rather than a distribution. No standard deviation
+is quoted, because there isn't one to quote yet. It grows with the log.
+
+An APPROVE additionally carries an `authorization` block naming the symbol,
+the two legs in order, the size, a `max_entry_basis_bps` ceiling and the same
+expiry. The agent is not handed permission to trade. It is handed permission
+to make this one economic decision, at this size, for the next few seconds.
+
+Every path out of the tool is a decision object, and every path that could not
+finish the arithmetic returns REJECT. A network timeout, a delisted symbol and
+a bug in the file all mean the same thing to the caller: the cost of this trade
+is unknown, and an unknown cost is not a green light. Fail closed.
+
+`CLAUDE.md` carries the policy that requires the call. Its limits are stated
+in Limitations below, and they are real.
 
 ## The cost model
 
@@ -93,11 +231,12 @@ cost to beat      44.32 bps
 ```
 
 Against that, the best funding rate seen anywhere on the board across the
-observation window was **4.676 bps per 8h settlement** (MARSCOINUSDT), which
-needs **3.16 days** of holding to break even and falls **30.29 bps short**
-over the three settlements the scanner is willing to underwrite.
+observation window was **5.265 bps per 8h settlement** (HOTUSDT, at
+2026-09-05 10:57 UTC), which needs **2.8 days** of holding to break even and
+falls **28.5 bps short** over the three settlements the scanner is willing to
+underwrite.
 
-That is the best print out of an entire board, over fifteen hours. It is not
+That is the best print out of an entire board, over nineteen hours. It is not
 close.
 
 ## The result
@@ -105,10 +244,10 @@ close.
 At the time of writing, `refusals.jsonl` holds:
 
 ```
-  window            2026-09-04 15:48 to 2026-09-05 06:36 UTC (14.8h)
-  scans             60
-  pair evaluations  21,900
-  refused           60
+  window            2026-09-04 15:48 to 2026-09-05 11:23 UTC (19.6h)
+  scans             69
+  pair evaluations  25,185
+  refused           69
   traded            0
 ```
 
@@ -149,6 +288,8 @@ and account state.
 | File | Role |
 |---|---|
 | `venue.py` | Shared venue layer. Decimal lot-step arithmetic, `exchangeInfo` filter parsing, disk-cached filters, top-of-book. Importable, no CLI dependency. |
+| `cost_oracle.py` | The cost engine. Prices a proposed hedge against live depth at the traded size and returns a decision object. Importable, no MCP dependency. |
+| `cost_mcp.py` | The `costcheck` MCP server. One tool, stdio, no credentials. Wraps `cost_oracle.py` and fails closed. |
 | `scanner.py` | Signal engine. Scans the USD-M board for funding that clears the full cost stack. |
 | `diagnose.py` | Funnel and distribution visibility. Proves the pipeline is not silently dropping everything. |
 | `select_symbol.py` | Ranks every hedgeable pair by the residual a minimum-size hedge would leave, from live filters and live books. |
@@ -274,6 +415,14 @@ constant to be looked up, it is a live quantity that has to be priced at the
 moment of trading, and a model reasoning in prose cannot know it. Even
 measuring it and then acting a minute later was not good enough here.
 
+The deeper problem is not that the constant was stale. It is that the
+prediction used the wrong model. Round-trip spread only equals the true price
+cost when the basis at the close matches the basis at the open, and there is
+no reason it should. Entry basis plus exit basis reproduces this run to within
+0.07 bps where the spread model was out by 23.73, which is why
+`cost_oracle.py` prices it that way and assumes the basis reverts rather than
+holds. Erring conservative can only make it refuse more.
+
 The honest reading of this run is that the cost oracle was **directionally
 right and still not conservative enough**. It refused every signal on the
 board, and the one trade it did execute, as a plumbing test rather than on
@@ -288,7 +437,7 @@ Stated plainly, because a simplification a judge discovers themselves is
 worth less than one you declare.
 
 - **No qualifying signal existed in the observation window.** Not one of
-  21,900 pair evaluations cleared 44.32 bps. The scanner printing
+  25,185 pair evaluations cleared 44.32 bps. The scanner printing
   `NO QUALIFYING SIGNAL` is correct behaviour, not a bug. No threshold was
   lowered to manufacture a trade.
 - **The executed trade is a mechanism test, not a trade taken on merit.** It
@@ -314,29 +463,66 @@ worth less than one you declare.
   `python select_symbol.py --refresh` re-derives it, and the constant's
   comment says so, but a constant is the wrong shape for this quantity. That
   is what the MCP server in future work is for.
+- **The oracle is advisory. It is not a security boundary.** This is the
+  most important limitation here and it would be dishonest to bury it. The
+  agent still holds `spot_newOrder` and `futures_usds_newOrder` directly. It
+  can call `evaluate_trade`, read `REJECT`, and place the order anyway.
+  Nothing in this repository can stop it. `CLAUDE.md` requires the call, but
+  that is a policy written in a file a model can ignore, not a wall. Making
+  it unbypassable means the agent never holding the raw order tools at all:
+  it calls a gateway, the gateway prices the trade, and only the gateway
+  holds the credentials that reach Binance. That gateway is not built. What
+  is built is the arithmetic it would have to run, which is the part that has
+  to be correct first, and which this project has already caught itself
+  getting wrong once.
+- **The executor's own prediction uses the older, narrower model.**
+  `executor.py` predicts the price term as round-trip spread, which is what
+  produced the 31.77 bps figure the paired run missed by 23.73. The corrected
+  entry-basis model lives in `cost_oracle.py`. The executor was deliberately
+  left alone rather than patched between recorded runs, so the two runs in
+  `trades.jsonl` are measured against the same yardstick and stay comparable.
 - **Single account, single fee tier.** 7.5 bps holds while BNB burn is on and
   the BNB reserve is above dust. Either changing reverts it to 10 bps taken
   out of the base asset, which would also reintroduce a fee-driven unhedged
   residual.
 
-## Future work: the productised form
+## Future work
 
-The natural product is not this scanner. It is a small MCP server of its own,
-sitting beside Binance's, exposing a single tool:
+The MCP server described in the section above is built. Three things after it,
+in the order they matter.
+
+**Make the check unbypassable.** Today the agent holds the order tools and
+the oracle asks nicely. The next version inverts that: the agent gets
+`request_trade(...)` and nothing else, a gateway holds the Binance
+credentials, and an order that arrives without a live, unexpired
+authorization does not reach the venue. The `authorization` block
+`evaluate_trade` already returns is shaped for exactly that handoff, which is
+the cheap half of the work. The expensive half is that the gateway has to
+hold credentials, and that is a different security posture from a tool that
+holds none.
+
+**Measure what the refusals were worth.** `refusals.jsonl` currently records
+a decision and its arithmetic. It does not record what happened next. Logging
+the funding that actually settled and the execution cost that would actually
+have been paid turns each refusal from an absence into a measured saving:
 
 ```
-price_roundtrip(symbol, side, notional) -> { cost breakdown, verdict }
+11:00  opportunity +38 bps, cost 46 bps, REFUSED
+19:00  funding actually settled at +7 bps, entry basis would have been 31 bps
+       counterfactual: refusing saved 14 bps
 ```
 
-Any agent connected to Agent OS calls it before calling `spot_newOrder`. The
-arithmetic then arrives in the model's context **as a number**, rather than
-being something the model was supposed to remember or derive. The verdict
-carries its own workings, so a refusal is auditable rather than opaque.
+Aggregated over thousands of decisions that is the number this whole project
+is missing. A guardrail that refuses everything is only obviously correct once
+you can show what the refusals avoided. Everything needed is already in the
+log format; it needs a follow-up pass and enough elapsed time to settle.
 
-That is deliberately not built here. This build is the reference
-implementation of the logic such a server would expose, and `venue.py` is
-already an importable module with no CLI dependency, so the cost engine is
-already separable from the scanner.
+**Close the loop on the model itself.** `calibration_gap` is the first stitch
+of this and it currently reads `n=1`. Every reconciled execution should feed
+its realised cost back so the oracle learns where its own estimates fail, in
+which direction, and on which symbols. The one data point so far says the
+model under-charges by 16.95 bps. One point is an anecdote. The mechanism to
+turn it into something better already exists and is wired up.
 
 ## Running it
 
@@ -345,10 +531,15 @@ pip install -r requirements.txt
 
 python diagnose.py                  # funnel + live funding distribution
 python scanner.py                   # scan the board, print the verdict
+python cost_oracle.py STRKUSDT      # price one hedge against live depth
+python cost_oracle.py STRKUSDT --json
 python select_symbol.py             # rank hedgeable pairs by residual
 python refusal_log.py --loop --every 300
 python report_refusals.py           # aggregate
 python build_report.py --open       # standalone report.html
+
+claude mcp add costcheck -- python cost_mcp.py    # expose it to an agent
+/mcp                                              # confirm it connected
 ```
 
 Execution runs through the Binance MCP server and is driven by the agent
