@@ -639,6 +639,11 @@ worth less than one you declare.
   measured against one unchanging threshold; anything about to place an order
   goes through `evaluate_trade` instead. `executor.py` has a different defect,
   priced live but on the wrong term, in the bullet below.
+- **Decisions are already partially stale by the time they arrive.** A measured
+  `quote_latency_ms` of ~2,570 ms consumes over a quarter of the 10-second TTL
+  simply fetching the depth books before the arithmetic even begins, meaning a
+  production version would need the TTL to account for measurement latency
+  rather than market movement alone.
 - **The oracle is advisory. It is not a security boundary.** This is the
   most important limitation here and it would be dishonest to bury it. The
   agent still holds `spot_newOrder` and `futures_usds_newOrder` directly. It
