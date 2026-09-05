@@ -2,25 +2,25 @@
 Symbol selection for the mechanism test.
 
 This does NOT pick a symbol by funding rate. scanner.py already established
-that nothing on the board clears 35 bps, so there is no funding trade to
-take. What this picks is the symbol on which a two-legged hedge at minimum
-size is least wrong.
+that nothing on the board clears its cost-to-beat, so there is no funding
+trade to take. What this picks is the symbol on which a two-legged hedge at
+minimum size is least wrong. The threshold itself lives in scanner.py and is
+deliberately not repeated here.
 
 The problem it solves: spot and USD-M futures publish different lot filters
 for the same asset. A hedge is opened on the futures leg, and the spot leg
-is then truncated to spot own stepSize against the actual futures fill. The
+is then truncated to the spot stepSize against the actual futures fill. The
 difference is unhedged delta you are holding whether you meant to or not.
 
-What the live board actually says, measured rather than assumed: only 6 of
-356 hedgeable pairs have a spot step COARSER than their futures step, so for
-almost every symbol that truncation is exactly zero. ACEUSDT is the real
-case: a 0.01 futures step against a 0.1 spot step, so up to one full spot
-step, 0.1 ACE or roughly 36 bps of a $5 leg, can end up unhedged depending
-on where the futures quantity lands. Truncation is therefore not the
-dominant error at this size. The two that are:
+What the live board actually says: only 6 of 356 hedgeable pairs have a spot
+step COARSER than their futures step, so for almost every symbol that
+truncation is exactly zero. ACEUSDT is the real case, a 0.01 futures step
+against a 0.1 spot step, so up to one full spot step, 0.1 ACE or roughly 36
+bps of a $5 leg, can end up unhedged depending on where the futures quantity
+lands. At this size truncation is not the dominant error.
 
-  - the cross-venue entry basis, typically 15-25 bps, paid the instant both
-    legs are on. This is now the FRICTION constant in scanner.py.
+What dominates is the cross-venue entry basis, typically 15-25 bps, paid the
+instant both legs are on. That is the FRICTION constant in scanner.py.
 
 The spot fee was the other suspect, on the theory that a BUY pays commission
 in the base asset and so lands short. A live check on 2026-09-04 disproved
@@ -270,15 +270,20 @@ def print_detail(r):
     print(f"\n  step residual   {venue.fmt_qty(r['step_resid'], r['spot_step'])} "
           f"{r['base']}  = {float(r['step_resid_usd']):.4f} USDT  "
           f"= {float(r['step_resid_bps']):.1f} bps of the leg")
+    # Label only. The zero comes from venue.FEE_PAID_IN_BASE_ASSET, which was
+    # settled on 2026-09-04 by two fills whose commissionAsset was BNB. It
+    # reverts to an assumption only under the condition named in the scanner
+    # comment: BNB burn switched off, or the BNB reserve run down to dust.
     print(f"  fee residual    {float(r['fee_resid_usd']):.4f} USDT  "
           f"= {float(r['fee_resid_bps']):.1f} bps   "
-          f"[ASSUMED: spot taker fee taken in {r['base']}; zero if paid in BNB]")
+          f"[VERIFIED 2026-09-04: commission paid in BNB, "
+          f"{r['base']} untouched]")
     print(f"  net unhedged    {float(r['net_resid_bps']):.1f} bps, short {r['base']}")
     eb = float(r["entry_basis_bps"])
-    side = "underwater by" if eb > 0 else "ahead by"
-    print(f"\n  entry basis     spot ask vs futures bid: {eb:+.1f} bps, so the "
-          f"hedge starts")
-    print(f"                  {side} {abs(eb):.1f} bps before a single fee is charged")
+    side = "underwater" if eb > 0 else "ahead"
+    print(f"\n  entry basis     {eb:+.1f} bps spot ask vs futures bid")
+    print(f"                  the hedge starts {side}, before a single fee "
+          f"is charged")
     print(f"\n  measured spread  spot {float(r['spot_spread_bps']):.2f} bps   "
           f"futures {float(r['fut_spread_bps']):.2f} bps   "
           f"round trip {float(r['rt_spread_bps']):.2f} bps")
@@ -339,8 +344,9 @@ def main():
     print(f"dropped {meta['base_mismatch']} more where the two venues quote a "
           f"different base asset for the same symbol string")
     print(f"remaining candidates: {len(rows)}")
+    n_resid = meta["with_truncation_residual"]
     print(f"\nof {meta['feasible']} pairs that can be hedged at all, "
-          f"{meta['with_truncation_residual']} leave a lot-step residual; "
+          f"{n_resid} {'leaves' if n_resid == 1 else 'leave'} a lot-step residual; "
           f"worst is {meta['worst_truncation_bps']:.0f} bps of one leg")
 
     if args.symbol:

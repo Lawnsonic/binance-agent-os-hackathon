@@ -10,14 +10,19 @@ Answers two questions the scanner cannot:
 import time
 import requests
 
+# The cost model is imported, never redefined. This file used to carry its
+# own copy of the taker fees and the friction term, and it drifted: after the
+# fee and basis corrections landed in scanner.py it was still printing 35.0
+# bps while the scanner printed 44.32. Two different cost-to-beat figures on
+# screen in the same session is a contradiction a careful reader is entitled
+# to catch, and it can only be prevented structurally. The derivations, with
+# the calls and fills that produced them, live in the scanner comments.
+from scanner import ROUND_TRIP, FRICTION
+
 FAPI = "https://fapi.binance.com"
 SAPI = "https://api.binance.com"
 TIMEOUT = 10
 
-SPOT_TAKER = 0.0010
-FUT_TAKER = 0.0005
-ROUND_TRIP = (SPOT_TAKER * 2) + (FUT_TAKER * 2)
-FRICTION = 0.0005
 TOTAL_COST = ROUND_TRIP + FRICTION
 
 

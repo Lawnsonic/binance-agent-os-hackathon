@@ -7,3 +7,7 @@ cache/
 *.out
 *.err
 *.log
+
+# refusal_log.py stdout/stderr when run detached (also covered by *.out/*.err)
+refusal_log.out
+refusal_log.err

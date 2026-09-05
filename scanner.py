@@ -45,7 +45,7 @@ FUT_TAKER = 0.0005       # 0.05% per side
 # Enter both legs, exit both legs = four taker fills.
 ROUND_TRIP = (SPOT_TAKER * 2) + (FUT_TAKER * 2)   # 0.0025 = 25 bps
 
-# Execution friction, measured rather than assumed.
+# Execution friction, taken off the live board instead of guessed.
 #
 # This was 0.0005, a guess covering "slippage + lot-step residual". That
 # premise was wrong: select_symbol.py measured the live board and found only

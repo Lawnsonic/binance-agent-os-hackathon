@@ -6,7 +6,7 @@ TEST, not a trade. scanner.py refused the entire board; nothing here clears
 cost. The point is to prove the execution path is real and to measure what
 it actually costs, with every number coming off a live fill.
 
-ARCHITECTURE, stated plainly because it constrains everything below.
+ARCHITECTURE, because it constrains everything below.
 
 Orders go through the Binance MCP server, which is authenticated by OAuth in
 the agent session. Python cannot call it: venue.py is unauthenticated public
@@ -14,10 +14,10 @@ REST and there are no API keys on disk. So this module does not place orders.
 It does the arithmetic and holds the state; the agent places each order and
 feeds the raw JSON response back in.
 
-That has a real consequence and it is logged rather than hidden: between leg
-one filling and leg two filling there is an agent round trip, during which
-the position is one-sided and directionally exposed. exposure_seconds in the
-report is that window, measured, not estimated.
+That costs something real, and the log says so instead of glossing it:
+between leg one filling and leg two filling there is an agent round trip, and
+for the length of it the position is one-sided and directionally exposed.
+exposure_seconds in the report is that window, timed off the two fills.
 
 THE ORDERING RULE (CONTEXT section 7.1) is the reason this is a state machine
 and not one function. Leg one goes on first. Leg two is sized from the
@@ -405,8 +405,10 @@ def cmd_record_leg2(args):
     wanted = D(st["leg2_order"]["quantity"])
 
     residual = fut_qty - spot_qty
-    px = D(fill["avg_price"]) if spot_qty > 0 else D(st["planned"]["spot_price"])
-    residual_usd = residual * px
+    # Not named px: that is the display helper, and shadowing it here made
+    # this function crash on the print after the state was already saved.
+    mark_px = D(fill["avg_price"]) if spot_qty > 0 else D(st["planned"]["spot_price"])
+    residual_usd = residual * mark_px
     notional = D(st["leg1_fill"]["quote_qty"])
 
     st["residual"] = {

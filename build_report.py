@@ -86,6 +86,7 @@ h1{font-size:clamp(26px,5vw,40px);margin:0 0 6px;letter-spacing:-.02em}
 .stat.hero .n{color:var(--accent)}
 h2{font-size:19px;margin:44px 0 8px;letter-spacing:-.01em}
 .note{color:var(--dim);font-size:14px;margin:0 0 18px;max-width:70ch}
+.rec{font-family:var(--mono);font-size:12px;color:var(--accent);margin:22px 0 8px;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
 .chartbox{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px;overflow-x:auto}
 svg{display:block;width:100%;height:auto;min-width:520px}
 .legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:14px;font-size:13px;color:var(--dim)}
@@ -211,23 +212,43 @@ document.getElementById("scans").innerHTML =
  }).join("") + `</tbody>`;
 
 // ---- trades -----------------------------------------------------------
+// Two kinds of record live in trades.jsonl and they do not belong under one
+// heading. Moving money into position is housekeeping; it is not evidence
+// that the execution path works. Only the orders are that.
 const ts=document.getElementById("tradesec");
-if(T.length){
-  ts.innerHTML = `<h2>Mechanism verification</h2>
-   <p class="note">The signal did not clear, so no position was taken on its
-   merits. These are minimum-size executions proving the order path works:
-   the short leg opens first, the long leg is sized from what actually filled,
-   and the residual is measured rather than assumed.</p>
+const PREP = new Set(["funding_sell","funding_transfer"]);
+const prep = T.filter(t=>PREP.has(t.event));
+const exec = T.filter(t=>!PREP.has(t.event));
+
+function recBlock(t){
+  const when = t.ts ? " &middot; " + t.ts.slice(0,19).replace("T"," ") + " UTC" : "";
+  return `<h3 class="rec">${t.event||"record"}${when}</h3>
    <div class="tbl"><table>
    <thead><tr><th>field</th><th>value</th></tr></thead><tbody>`
-   + T.map(t=>Object.entries(t).map(([k,v])=>
+   + Object.entries(t).filter(([k])=>k!=="event").map(([k,v])=>
       `<tr><td>${k}</td><td>${typeof v==="object"?JSON.stringify(v):v}</td></tr>`
-     ).join("")).join("") + `</tbody></table></div>`;
-} else {
-  ts.innerHTML = `<h2>Mechanism verification</h2>
-   <p class="note">No trades recorded yet. Run the executor, then rebuild
-   this page.</p>`;
+     ).join("") + `</tbody></table></div>`;
 }
+
+let tHTML = `<h2>Mechanism verification</h2>`;
+if(exec.length){
+  tHTML += `<p class="note">The signal did not clear, so no position was taken
+   on its merits. These are minimum-size executions proving the order path
+   works: the short leg opens first, the long leg is sized from what actually
+   filled, and the residual is measured instead of being taken on trust.</p>`
+   + exec.map(recBlock).join("");
+} else {
+  tHTML += `<p class="note">No executions recorded yet. Run the executor, then
+   rebuild this page.</p>`;
+}
+if(prep.length){
+  tHTML += `<h2>Account preparation</h2>
+   <p class="note">Housekeeping that moved capital to where the two legs
+   needed it. These are not executions and prove nothing about the order
+   path. They are listed so the ledger is complete.</p>`
+   + prep.map(recBlock).join("");
+}
+ts.innerHTML = tHTML;
 
 document.getElementById("foot").textContent =
  `Generated ${D.generated} from refusals.jsonl. `
